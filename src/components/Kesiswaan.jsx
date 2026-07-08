@@ -1,31 +1,28 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import DataTable from './DataTable'
 import ExcelUpload from './ExcelUpload'
 import DocViewer from './DocViewer'
-import Toast, { useToast } from './Toast'
 import { saveToStorage, loadFromStorage, generateId } from '../utils/storage'
 import { saveFile, getFileURL, deleteFile } from '../utils/fileDB'
 
 const KEY = 'sit_kesiswaan'
 
 // GANTI dengan URL Web App dari hasil Deploy Google Apps Script
-// Cara dapat URL: Apps Script → Deploy → Manage deployments → salin Web app URL
 const GAS_URL = import.meta.env.VITE_GAS_KESISWAAN_URL || ''
 
 const JENIS_DOKUMEN = [
-  'Ijazah SD',
-  'Ijazah SMP',
+  'Ijazah jenjang sebelumnya dan SMP',
   'Akte',
   'Kartu Keluarga',
   'Nilai Raport',
-  'SKP',
+  'Nilai Sidanira',
 ]
 
 const COLUMNS = [
   { key: 'nama',         label: 'Nama Murid' },
   { key: 'nis',          label: 'NIS' },
   { key: 'nisn',         label: 'NISN' },
-  { key: 'jk',           label: 'Jenis Kelamin' },
+  { key: 'jk',           label: 'JK' },
   { key: 'tempatLahir',  label: 'Tempat Lahir' },
   { key: 'tanggalLahir', label: 'Tanggal Lahir' },
   { key: 'agama',        label: 'Agama' },
@@ -41,7 +38,7 @@ const COLUMNS = [
 const EMPTY = {
   nama: '', nisn: '', nis: '', jk: '', tempatLahir: '', tanggalLahir: '',
   agama: '', alamat: '', sekolahAsal: '',
-  jenisDokumen: '', keterangan: '', namaFile: '',
+  jenisDokumen: JENIS_DOKUMEN[0], keterangan: '', namaFile: '',
 }
 
 /** Ambil nilai dari objek dengan beberapa kemungkinan key */
@@ -100,25 +97,11 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 export default function Kesiswaan() {
   const [data, setData]           = useState(() => loadFromStorage(KEY))
   const [form, setForm]           = useState(EMPTY)
+  const [editId, setEditId]       = useState(null) // State untuk melacak data yang sedang diedit
   const [pendingFile, setPending] = useState(null)
   const [modal, setModal]         = useState(null)
   const [viewer, setViewer]       = useState(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const { toast, showToast, closeToast } = useToast()
-
-  // Fetch data dari GAS saat load — supaya semua admin lihat data terbaru dari Drive
-  useEffect(() => {
-    if (!GAS_URL) return
-    fetch(`${GAS_URL}?action=getData`)
-      .then(r => r.json())
-      .then(result => {
-        if (result.success && result.rows.length > 0) {
-          setData(result.rows)
-          saveToStorage(KEY, result.rows)
-        }
-      })
-      .catch(err => console.warn('Gagal fetch data dari GAS:', err))
-  }, [])
+  const [isLoading, setIsLoading] = useState(false) 
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -127,24 +110,82 @@ export default function Kesiswaan() {
     f('namaFile', file.name); setPending(file)
   }
 
+  // Fungsi memicu mode edit (mengisi form utama dengan data yang dipilih)
+  const handleEditClick = (row) => {
+    setEditId(row.id)
+    setForm(row)
+    // Scroll otomatis ke form agar user tahu sedang mengedit
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Fungsi upload file langsung dari dalam baris tabel
+  const handleInlineUpload = async (row, file) => {
+    if (!file) return
+    setIsLoading(true)
+    
+    let fileBase64 = null
+    let fileName = file.name
+
+    try {
+      fileBase64 = await fileToBase64(file)
+      await saveFile(row.id, file) // Backup lokal ke IndexedDB
+
+      const updatedRow = { ...row, namaFile: fileName }
+
+      if (!GAS_URL) {
+        const next = data.map(d => d.id === row.id ? updatedRow : d)
+        setData(next); saveToStorage(KEY, next)
+        alert('File disimpan secara lokal. Set VITE_GAS_KESISWAAN_URL di .env untuk sinkronisasi Drive.')
+        return
+      }
+
+      const response = await fetch(GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        redirect: 'follow',
+        body: JSON.stringify({
+          action: 'updateRow', // Menggunakan action updateRow di Google Apps Script
+          rowData: updatedRow,
+          fileBase64,
+          fileName,
+        }),
+      })
+
+      const text = await response.text()
+      let result
+      try { result = JSON.parse(text) }
+      catch { throw new Error('Respons tidak valid dari server: ' + text.slice(0, 200)) }
+
+      if (result.success) {
+        updatedRow.fileUrlDrive = result.fileUrl || updatedRow.fileUrlDrive
+        const next = data.map(d => d.id === row.id ? updatedRow : d)
+        setData(next); saveToStorage(KEY, next)
+        alert('File berhasil diupload ke Google Drive!')
+      } else {
+        throw new Error(result.error || 'Gagal simpan ke Drive')
+      }
+    } catch (error) {
+      console.error(error)
+      alert('Gagal mengupload file: ' + error.message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!form.nama.trim())                  return alert('Nama Murid wajib diisi.')
-    if (!form.nis.trim())                   return alert('NIS wajib diisi.')
-    if (!/^\d{10}$/.test(form.nis.trim()))  return alert('NIS harus 10 digit angka.')
-    if (!form.nisn.trim())                  return alert('NISN wajib diisi.')
-    if (!/^\d{10}$/.test(form.nisn.trim())) return alert('NISN harus 10 digit angka.')
-    if (!form.jk)                           return alert('Jenis Kelamin wajib dipilih.')
-    if (!form.tempatLahir.trim())           return alert('Tempat Lahir wajib diisi.')
-    if (!form.tanggalLahir)                 return alert('Tanggal Lahir wajib diisi.')
-    if (!form.agama.trim())                 return alert('Agama wajib diisi.')
-    if (!form.alamat.trim())                return alert('Alamat wajib diisi.')
-    if (!form.sekolahAsal.trim())           return alert('Sekolah Asal wajib diisi.')
-    if (!form.jenisDokumen)                 return alert('Jenis Dokumen wajib dipilih.')
+    if (!form.nama.trim()) return alert('Nama Murid wajib diisi.')
     
     setIsLoading(true)
-    const id  = generateId()
-    const row = { ...form, id, tanggalInput: new Date().toLocaleDateString('id-ID') }
+    const isEdit = !!editId
+    const id  = isEdit ? editId : generateId()
+    
+    const row = { 
+      ...form, 
+      id, 
+      tanggalInput: isEdit ? form.tanggalInput : new Date().toLocaleDateString('id-ID') 
+    }
+    
     let fileBase64 = null
     let fileName = null
 
@@ -153,40 +194,55 @@ export default function Kesiswaan() {
         fileBase64 = await fileToBase64(pendingFile)
         fileName = pendingFile.name
         await saveFile(id, pendingFile) // Backup lokal
+        row.namaFile = fileName
       }
 
       if (!GAS_URL) {
-        // Simpan lokal saja jika GAS_URL belum diset
-        const next = [...data, row]
+        const next = isEdit 
+          ? data.map(d => d.id === editId ? row : d)
+          : [...data, row]
         setData(next); saveToStorage(KEY, next)
-        setForm(EMPTY); setPending(null)
-        showToast('Data berhasil ditambahkan')
-        return
+        setForm(EMPTY); setPending(null); setEditId(null)
+        return alert('Data disimpan secara lokal. Set VITE_GAS_KESISWAAN_URL di .env untuk sinkronisasi Drive.')
       }
 
       const response = await fetch(GAS_URL, {
         method: 'POST',
-        mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        redirect: 'follow',
         body: JSON.stringify({
-          action: 'uploadRow',
+          action: isEdit ? 'updateRow' : 'uploadRow', // Kirim action dinamis tergantung mode
           rowData: row,
           fileBase64,
           fileName,
         }),
       })
 
-      // no-cors: response selalu opaque, tidak bisa dibaca — tapi data sudah terkirim ke GAS
-      const next = [...data, row]
-      setData(next); saveToStorage(KEY, next)
-      setForm(EMPTY); setPending(null)
-      showToast('Data berhasil ditambahkan')
+      const text = await response.text()
+      let result
+      try { result = JSON.parse(text) }
+      catch { throw new Error('Respons tidak valid dari server: ' + text.slice(0, 200)) }
+
+      if (result.success) {
+        row.fileUrlDrive = result.fileUrl || row.fileUrlDrive
+        const next = isEdit 
+          ? data.map(d => d.id === editId ? row : d)
+          : [...data, row]
+        setData(next); saveToStorage(KEY, next)
+        setForm(EMPTY); setPending(null); setEditId(null)
+        alert(isEdit ? 'Perubahan data berhasil disimpan!' : 'Data berhasil disimpan ke lokal dan Google Drive!')
+      } else {
+        throw new Error(result.error || 'Gagal simpan ke Drive')
+      }
     } catch (error) {
       console.error(error)
-      const next = [...data, row]
+      // Tetap simpan lokal meski Drive gagal
+      const next = isEdit 
+        ? data.map(d => d.id === editId ? row : d)
+        : [...data, row]
       setData(next); saveToStorage(KEY, next)
-      setForm(EMPTY); setPending(null)
-      showToast('Data berhasil ditambahkan')
+      setForm(EMPTY); setPending(null); setEditId(null)
+      alert('Data disimpan lokal, tapi gagal ke Drive: ' + error.message)
     } finally {
       setIsLoading(false)
     }
@@ -212,51 +268,69 @@ export default function Kesiswaan() {
       if (!GAS_URL) {
         const next = [...data, ...mapped]
         setData(next); saveToStorage(KEY, next)
-        showToast('Data berhasil ditambahkan')
-        return
+        return alert(`${mapped.length} data diimport lokal. Set VITE_GAS_KESISWAAN_URL di .env untuk sinkronisasi Drive.`)
       }
 
       const response = await fetch(GAS_URL, {
         method: 'POST',
-        mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        redirect: 'follow',
         body: JSON.stringify({ action: 'uploadBulk', rows: mapped }),
       })
 
-      // no-cors: data terkirim ke GAS di background
-      const next = [...data, ...mapped]
-      setData(next); saveToStorage(KEY, next)
-      showToast('Data berhasil ditambahkan')
+      const text = await response.text()
+      let result
+      try { result = JSON.parse(text) }
+      catch { throw new Error('Respons tidak valid dari server: ' + text.slice(0, 200)) }
+
+      if (result.success) {
+        const next = [...data, ...mapped]
+        setData(next); saveToStorage(KEY, next)
+        alert(`${mapped.length} data siswa berhasil diimport dan disinkronkan ke Drive.`)
+      } else {
+        throw new Error(result.error || 'Gagal sinkronisasi ke Drive')
+      }
     } catch (error) {
       console.error(error)
       const next = [...data, ...mapped]
       setData(next); saveToStorage(KEY, next)
-      showToast('Data berhasil ditambahkan')
+      alert(`${mapped.length} data disimpan lokal, tapi gagal ke Drive: ` + error.message)
     } finally {
       setIsLoading(false)
     }
   }
 
   const openDetail = async (row) => {
-    let fileUrl = row.fileUrlDrive || null // Prioritaskan link dari Google Drive
-    
-    // Jika tidak ada link Drive, coba ambil dari IndexedDB lokal (untuk data lama)
+    let fileUrl = row.fileUrlDrive || null
     if (!fileUrl && row.id && row.namaFile) {
-      try {
-        fileUrl = await getFileURL(row.id)
-      } catch (error) {
-        console.warn('File tidak ditemukan di lokal', error)
-      }
+      try { fileUrl = await getFileURL(row.id) } 
+      catch (error) { console.warn('File tidak ditemukan di lokal', error) }
     }
     setModal({ row, fileUrl })
   }
 
   const renderCell = (col, row) => {
     if (col.key === 'aksi') return (
-      <button onClick={() => openDetail(row)}
-        className="text-indigo-600 hover:text-indigo-800 text-xs font-semibold underline underline-offset-2">
-        Lihat Detail
-      </button>
+      <div className="flex items-center gap-3">
+        <button onClick={() => openDetail(row)}
+          className="text-indigo-600 hover:text-indigo-800 text-xs font-semibold underline underline-offset-2">
+          Lihat Detail
+        </button>
+        <button onClick={() => handleEditClick(row)}
+          className="text-amber-600 hover:text-amber-800 text-xs font-semibold underline underline-offset-2">
+          Edit
+        </button>
+        <label className="cursor-pointer text-emerald-600 hover:text-emerald-800 text-xs font-semibold underline underline-offset-2 relative">
+          {row.namaFile ? 'Ganti File' : 'Upload File'}
+          <input 
+            type="file" 
+            accept=".pdf" 
+            className="hidden" 
+            onChange={(e) => handleInlineUpload(row, e.target.files[0])} 
+            disabled={isLoading}
+          />
+        </label>
+      </div>
     )
     if (col.key === 'alamat') return (
       <span className="text-xs block max-w-48 truncate" title={row.alamat}>{row.alamat || '-'}</span>
@@ -269,7 +343,6 @@ export default function Kesiswaan() {
 
   return (
     <div className="space-y-6 max-w-screen-xl">
-      {toast && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {JENIS_DOKUMEN.slice(0, 4).map(j => (
@@ -282,7 +355,7 @@ export default function Kesiswaan() {
 
       {/* Form */}
       <div className="card">
-        <p className="section-title">Input Data Siswa</p>
+        <p className="section-title">{editId ? 'Edit Data Siswa' : 'Input Data Siswa'}</p>
         <form onSubmit={handleSubmit}>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
             <div>
@@ -290,45 +363,44 @@ export default function Kesiswaan() {
               <input className="input" value={form.nama} onChange={e => f('nama', e.target.value)} placeholder="Nama lengkap" />
             </div>
             <div>
-              <label className="label">NIS <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">NIS</label>
               <input className="input" value={form.nis} onChange={e => f('nis', e.target.value)} placeholder="Nomor Induk Siswa" />
             </div>
             <div>
-              <label className="label">NISN <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">NISN</label>
               <input className="input" value={form.nisn} onChange={e => f('nisn', e.target.value)} placeholder="Nomor Induk Siswa Nasional" />
             </div>
             <div>
-              <label className="label">Jenis Kelamin <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">Jenis Kelamin</label>
               <select className="input" value={form.jk} onChange={e => f('jk', e.target.value)}>
-                <option value="">-- Pilih Jenis Kelamin --</option>
+                <option value="">-- Pilih --</option>
                 <option>Laki-laki</option>
                 <option>Perempuan</option>
               </select>
             </div>
             <div>
-              <label className="label">Tempat Lahir <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">Tempat Lahir</label>
               <input className="input" value={form.tempatLahir} onChange={e => f('tempatLahir', e.target.value)} placeholder="Kota tempat lahir" />
             </div>
             <div>
-              <label className="label">Tanggal Lahir <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">Tanggal Lahir</label>
               <input className="input" type="date" value={form.tanggalLahir} onChange={e => f('tanggalLahir', e.target.value)} />
             </div>
             <div>
-              <label className="label">Agama <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">Agama</label>
               <input className="input" value={form.agama} onChange={e => f('agama', e.target.value)} placeholder="Agama" />
             </div>
             <div className="sm:col-span-2">
-              <label className="label">Alamat <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">Alamat</label>
               <input className="input" value={form.alamat} onChange={e => f('alamat', e.target.value)} placeholder="Alamat lengkap" />
             </div>
             <div>
-              <label className="label">Sekolah Asal <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">Sekolah Asal</label>
               <input className="input" value={form.sekolahAsal} onChange={e => f('sekolahAsal', e.target.value)} placeholder="Nama sekolah asal" />
             </div>
             <div>
-              <label className="label">Jenis Dokumen <span className="text-rose-400 normal-case">*</span></label>
+              <label className="label">Jenis Dokumen</label>
               <select className="input" value={form.jenisDokumen} onChange={e => f('jenisDokumen', e.target.value)}>
-                <option value="">-- Silahkan Pilih Jenis Dokumen --</option>
                 {JENIS_DOKUMEN.map(j => <option key={j}>{j}</option>)}
               </select>
             </div>
@@ -351,12 +423,17 @@ export default function Kesiswaan() {
           </div>
           <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-100">
             <button type="submit" disabled={isLoading} className="btn-primary">
-              {isLoading ? 'Menyimpan...' : 'Simpan'}
+              {isLoading ? 'Menyimpan...' : editId ? 'Simpan Perubahan' : 'Simpan'}
             </button>
-            <div className={isLoading ? "pointer-events-none opacity-60" : ""}>
+            {editId && (
+              <button type="button" onClick={() => { setEditId(null); setForm(EMPTY); setPending(null) }} className="btn-secondary">
+                Batal Edit
+              </button>
+            )}
+            <div className={isLoading || editId ? "pointer-events-none opacity-60" : ""}>
               <ExcelUpload onData={handleExcel} />
             </div>
-            <button type="button" onClick={() => { setForm(EMPTY); setPending(null) }} className="btn-secondary">Reset</button>
+            <button type="button" onClick={() => { setForm(EMPTY); setPending(null); setEditId(null) }} className="btn-secondary">Reset</button>
           </div>
         </form>
       </div>
