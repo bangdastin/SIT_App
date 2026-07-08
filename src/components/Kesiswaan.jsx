@@ -238,13 +238,23 @@ export default function Kesiswaan() {
   return (
     <div className="space-y-6 max-w-screen-xl">
       {toast && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {JENIS_DOKUMEN.slice(0, 4).map(j => (
-          <div key={j} className="card py-4">
-            <p className="text-2xl font-bold text-indigo-600">{data.filter(d => d.jenisDokumen === j).length}</p>
-            <p className="text-xs text-slate-500 mt-1 leading-snug">{j}</p>
-          </div>
-        ))}
+      <div className="flex gap-4 overflow-x-auto pb-2">
+        {(() => {
+          // Tampilkan semua jenis dokumen unik dari data yang ada
+          const allJenis = [...new Set(data.map(d => d.jenisDokumen).filter(Boolean))]
+          if (allJenis.length === 0) return JENIS_DOKUMEN.map(j => (
+            <div key={j} className="card py-4 min-w-36 flex-shrink-0">
+              <p className="text-2xl font-bold text-indigo-600">0</p>
+              <p className="text-xs text-slate-500 mt-1 leading-snug">{j}</p>
+            </div>
+          ))
+          return allJenis.map(j => (
+            <div key={j} className="card py-4 min-w-36 flex-shrink-0">
+              <p className="text-2xl font-bold text-indigo-600">{data.filter(d => d.jenisDokumen === j).length}</p>
+              <p className="text-xs text-slate-500 mt-1 leading-snug">{j}</p>
+            </div>
+          ))
+        })()}
       </div>
 
       <div className="card">
