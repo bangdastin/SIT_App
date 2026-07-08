@@ -22,7 +22,7 @@
  */
 
 // ─── Konfigurasi ──────────────────────────────────────────────────────────────
-const ROOT_FOLDER_NAME  = 'KESISWAAN'
+const ROOT_FOLDER_ID    = '14n26CyPHcq4u9Vo3cQkA2a9nvGTvv5ih'  // Folder Drive SIT Terpadu
 const MASTER_FILE_NAME  = 'Data_Kesiswaan'
 
 const SHEET_HEADERS = [
@@ -72,21 +72,20 @@ function doGet(e) {
 // ─── Handler: Upload 1 baris + file PDF ───────────────────────────────────────
 function handleUploadRow(payload) {
   const row       = payload.rowData
-  const b64       = payload.fileBase64   // bisa null
-  const fileName  = payload.fileName     // bisa null
+  const b64       = payload.fileBase64
+  const fileName  = payload.fileName
 
-  const rootFolder = getOrCreateFolder(DriveApp.getRootFolder(), ROOT_FOLDER_NAME)
+  const rootFolder = DriveApp.getFolderById(ROOT_FOLDER_ID)
   const sheet      = getOrCreateMasterSheet(rootFolder)
 
   let fileUrl = ''
   if (b64 && fileName) {
-    const jenisDok   = row.jenisDokumen || 'Lainnya'
-    const subFolder  = getOrCreateFolder(rootFolder, jenisDok)
-    const pdfFile    = uploadBase64File(b64, fileName, subFolder)
+    const jenisDok  = row.jenisDokumen || 'Lainnya'
+    const subFolder = getOrCreateFolder(rootFolder, jenisDok)
+    const pdfFile   = uploadBase64File(b64, fileName, subFolder)
     fileUrl = pdfFile.getUrl()
   }
 
-  // Tambah baris ke sheet master
   sheet.appendRow([
     row.id || '',
     row.nama || '',
@@ -113,20 +112,12 @@ function handleUploadBulk(payload) {
   const rows = payload.rows || []
   if (!rows.length) return { success: false, error: 'Tidak ada data' }
 
-  const rootFolder = getOrCreateFolder(DriveApp.getRootFolder(), ROOT_FOLDER_NAME)
+  const rootFolder = DriveApp.getFolderById(ROOT_FOLDER_ID)
   const sheet      = getOrCreateMasterSheet(rootFolder)
 
-  // Pastikan subfolder jenis dokumen sudah ada
-  const JENIS_DOKUMEN = [
-    'Ijazah jenjang sebelumnya dan SMP',
-    'Akte',
-    'Kartu Keluarga',
-    'Nilai Raport',
-    'Nilai Sidanira',
-  ]
+  const JENIS_DOKUMEN = ['Ijazah SD', 'Ijazah SMP', 'Akte', 'Kartu Keluarga', 'Nilai Rapor', 'SKP']
   JENIS_DOKUMEN.forEach(j => getOrCreateFolder(rootFolder, j))
 
-  // Tulis semua baris ke sheet master
   const newRows = rows.map(row => [
     row.id || '',
     row.nama || '',
@@ -141,7 +132,7 @@ function handleUploadBulk(payload) {
     row.jenisDokumen || '',
     row.keterangan || '',
     row.namaFile || '',
-    '',   // fileUrl kosong, belum ada PDF
+    '',
     row.tanggalInput || new Date().toLocaleDateString('id-ID')
   ])
 
@@ -153,8 +144,6 @@ function handleUploadBulk(payload) {
   return { success: true, count: rows.length }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 /** Ambil atau buat folder berdasarkan nama di dalam parentFolder */
 function getOrCreateFolder(parentFolder, name) {
   const iter = parentFolder.getFoldersByName(name)
@@ -164,7 +153,6 @@ function getOrCreateFolder(parentFolder, name) {
 
 /**
  * Ambil atau buat Spreadsheet master "Data_Kesiswaan" di dalam rootFolder.
- * Return Sheet pertamanya (sudah ada header).
  */
 function getOrCreateMasterSheet(rootFolder) {
   const iter = rootFolder.getFilesByName(MASTER_FILE_NAME)
@@ -172,23 +160,20 @@ function getOrCreateMasterSheet(rootFolder) {
 
   if (iter.hasNext()) {
     ss = SpreadsheetApp.open(iter.next())
-    // Pastikan kolom ID selalu tersembunyi meski spreadsheet sudah lama dibuat
     const sheet = ss.getActiveSheet()
     if (!sheet.isColumnHiddenByUser(1)) sheet.hideColumns(1)
   } else {
-    // Buat spreadsheet baru di root Drive dulu, lalu pindahkan ke folder KESISWAAN
     ss = SpreadsheetApp.create(MASTER_FILE_NAME)
     const file = DriveApp.getFileById(ss.getId())
     rootFolder.addFile(file)
-    DriveApp.getRootFolder().removeFile(file) // hapus dari root Drive
+    DriveApp.getRootFolder().removeFile(file)
 
-    // Tulis header
     const sheet = ss.getActiveSheet()
     sheet.setName('Data Siswa')
     sheet.appendRow(SHEET_HEADERS)
     sheet.getRange(1, 1, 1, SHEET_HEADERS.length).setFontWeight('bold')
     sheet.setFrozenRows(1)
-    sheet.hideColumns(1) // Sembunyikan kolom ID
+    sheet.hideColumns(1)
   }
 
   return ss.getActiveSheet()
@@ -198,20 +183,7 @@ function getOrCreateMasterSheet(rootFolder) {
 function uploadBase64File(base64String, fileName, folder) {
   const decoded = Utilities.base64Decode(base64String)
   const blob    = Utilities.newBlob(decoded, 'application/pdf', fileName)
-
-  // Hapus file lama dengan nama sama (opsional, hindari duplikat)
   const existing = folder.getFilesByName(fileName)
   while (existing.hasNext()) existing.next().setTrashed(true)
-
   return folder.createFile(blob)
-}
-
-// ─── Jalankan sekali manual untuk hide kolom ID di spreadsheet yang sudah ada ─
-function fixHideIdColumn() {
-  const rootFolder = getOrCreateFolder(DriveApp.getRootFolder(), ROOT_FOLDER_NAME)
-  const iter = rootFolder.getFilesByName(MASTER_FILE_NAME)
-  if (!iter.hasNext()) { Logger.log('File tidak ditemukan'); return }
-  const sheet = SpreadsheetApp.open(iter.next()).getActiveSheet()
-  sheet.hideColumns(1)
-  Logger.log('Kolom ID berhasil disembunyikan')
 }
