@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import DataTable from './DataTable'
 import ExcelUpload from './ExcelUpload'
 import DocViewer from './DocViewer'
@@ -105,6 +105,20 @@ export default function Kesiswaan() {
   const [viewer, setViewer]       = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const { toast, showToast, closeToast } = useToast()
+
+  // Fetch data dari GAS saat load — supaya semua admin lihat data terbaru dari Drive
+  useEffect(() => {
+    if (!GAS_URL) return
+    fetch(`${GAS_URL}?action=getData`)
+      .then(r => r.json())
+      .then(result => {
+        if (result.success && result.rows.length > 0) {
+          setData(result.rows)
+          saveToStorage(KEY, result.rows)
+        }
+      })
+      .catch(err => console.warn('Gagal fetch data dari GAS:', err))
+  }, [])
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
