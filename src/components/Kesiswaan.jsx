@@ -17,12 +17,17 @@ const NORMALISASI_JENIS = {
   'ijazah smp': 'Ijazah SMP',
   'ijazah jenjang sebelumnya dan smp': 'Ijazah SMP',
   'ijazah jenjang sebelumnya': 'Ijazah SD',
+  'ijazah': 'Ijazah SD',
   'akte': 'Akte',
   'akte kelahiran': 'Akte',
+  'akta': 'Akte',
+  'akta kelahiran': 'Akte',
   'kartu keluarga': 'Kartu Keluarga',
   'kk': 'Kartu Keluarga',
   'nilai raport': 'Nilai Raport',
+  'nilai rapor': 'Nilai Raport',
   'raport': 'Nilai Raport',
+  'rapor': 'Nilai Raport',
   'skp': 'SKP',
 }
 
@@ -263,11 +268,11 @@ export default function Kesiswaan() {
   return (
     <div className="space-y-6 max-w-screen-xl">
       {toast && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
-      <div className="flex gap-4 overflow-x-auto pb-2">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {JENIS_DOKUMEN.map(j => (
-          <div key={j} className="card py-4 min-w-36 flex-shrink-0">
-            <p className="text-2xl font-bold text-indigo-600">{data.filter(d => d.jenisDokumen === j).length}</p>
-            <p className="text-xs text-slate-500 mt-1 leading-snug">{j}</p>
+          <div key={j} className="card py-5 px-4">
+            <p className="text-3xl font-bold text-indigo-600">{data.filter(d => d.jenisDokumen === j).length}</p>
+            <p className="text-sm text-slate-500 mt-2 leading-snug font-medium">{j}</p>
           </div>
         ))}
       </div>
