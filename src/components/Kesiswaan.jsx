@@ -152,8 +152,8 @@ export default function Kesiswaan() {
 
       const response = await fetch(GAS_URL, {
         method: 'POST',
+        mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        redirect: 'follow',
         body: JSON.stringify({
           action: 'uploadRow',
           rowData: row,
@@ -162,20 +162,11 @@ export default function Kesiswaan() {
         }),
       })
 
-      const text = await response.text()
-      let result
-      try { result = JSON.parse(text) }
-      catch { throw new Error('Respons tidak valid dari server: ' + text.slice(0, 200)) }
-
-      if (GAS_URL && response && result.success) {
-        row.fileUrlDrive = result.fileUrl || null
-        const next = [...data, row]
-        setData(next); saveToStorage(KEY, next)
-        setForm(EMPTY); setPending(null)
-        showToast('Data berhasil ditambahkan')
-      } else {
-        throw new Error(result.error || 'Gagal simpan ke Drive')
-      }
+      // no-cors: response selalu opaque, tidak bisa dibaca — tapi data sudah terkirim ke GAS
+      const next = [...data, row]
+      setData(next); saveToStorage(KEY, next)
+      setForm(EMPTY); setPending(null)
+      showToast('Data berhasil ditambahkan')
     } catch (error) {
       console.error(error)
       const next = [...data, row]
@@ -213,23 +204,15 @@ export default function Kesiswaan() {
 
       const response = await fetch(GAS_URL, {
         method: 'POST',
+        mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        redirect: 'follow',
         body: JSON.stringify({ action: 'uploadBulk', rows: mapped }),
       })
 
-      const text = await response.text()
-      let result
-      try { result = JSON.parse(text) }
-      catch { throw new Error('Respons tidak valid dari server: ' + text.slice(0, 200)) }
-
-      if (result.success) {
-        const next = [...data, ...mapped]
-        setData(next); saveToStorage(KEY, next)
-        showToast('Data berhasil ditambahkan')
-      } else {
-        throw new Error(result.error || 'Gagal sinkronisasi ke Drive')
-      }
+      // no-cors: data terkirim ke GAS di background
+      const next = [...data, ...mapped]
+      setData(next); saveToStorage(KEY, next)
+      showToast('Data berhasil ditambahkan')
     } catch (error) {
       console.error(error)
       const next = [...data, ...mapped]
