@@ -6,12 +6,30 @@ const SHEET_HEADERS = [
   'Jenis Dokumen','Keterangan','Nama File','URL Drive','Tanggal Input'
 ]
 
+/** Format tanggal apapun jadi dd/mm/yyyy */
+function formatTanggal(val) {
+  if (!val) return ''
+  const s = String(val)
+  // Kalau sudah format dd/mm/yyyy atau dd-mm-yyyy, kembalikan apa adanya
+  if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/.test(s)) return s.replace(/-/g, '/')
+  // Kalau format yyyy-mm-dd (ISO)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s)
+    if (!isNaN(d)) return d.toLocaleDateString('id-ID')
+  }
+  // Kalau Date object / string panjang
+  const d = new Date(val)
+  if (!isNaN(d)) return d.toLocaleDateString('id-ID')
+  return s
+}
+
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents)
     let result
     if (payload.action === 'uploadRow')       result = handleUploadRow(payload)
     else if (payload.action === 'uploadBulk') result = handleUploadBulk(payload)
+    else if (payload.action === 'updateRow')  result = handleUpdateRow(payload)
     else result = { success: false, error: 'Action tidak dikenal' }
     return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON)
   } catch (err) {
@@ -20,7 +38,6 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  // Endpoint untuk fetch semua data (dipakai admin lain saat load)
   if (e && e.parameter && e.parameter.action === 'getData') {
     try {
       const rootFolder = DriveApp.getFolderById(ROOT_FOLDER_ID)
@@ -38,7 +55,7 @@ function doGet(e) {
         nisn:         String(r[3] || ''),
         jk:           String(r[4] || ''),
         tempatLahir:  String(r[5] || ''),
-        tanggalLahir: String(r[6] || ''),
+        tanggalLahir: formatTanggal(r[6]),
         agama:        String(r[7] || ''),
         alamat:       String(r[8] || ''),
         sekolahAsal:  String(r[9] || ''),
@@ -46,7 +63,7 @@ function doGet(e) {
         keterangan:   String(r[11] || ''),
         namaFile:     String(r[12] || ''),
         fileUrlDrive: String(r[13] || ''),
-        tanggalInput: String(r[14] || ''),
+        tanggalInput: formatTanggal(r[14]),
       })).filter(r => r.nama)
       return ContentService.createTextOutput(JSON.stringify({ success: true, rows }))
         .setMimeType(ContentService.MimeType.JSON)
@@ -91,6 +108,39 @@ function handleUploadBulk(payload) {
   ])
   sheet.getRange(sheet.getLastRow()+1, 1, newRows.length, SHEET_HEADERS.length).setValues(newRows)
   return { success: true, count: rows.length }
+}
+
+function handleUpdateRow(payload) {
+  const row = payload.rowData
+  const rootFolder = DriveApp.getFolderById(ROOT_FOLDER_ID)
+  const sheet = getOrCreateMasterSheet(rootFolder)
+  const lastRow = sheet.getLastRow()
+  if (lastRow <= 1) return { success: false, error: 'Data tidak ditemukan' }
+
+  // Cari baris berdasarkan ID (kolom 1)
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues()
+  let targetRow = -1
+  for (let i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]) === String(row.id)) { targetRow = i + 2; break }
+  }
+  if (targetRow === -1) return { success: false, error: 'ID tidak ditemukan: ' + row.id }
+
+  // Upload file baru jika ada
+  let fileUrl = row.fileUrlDrive || ''
+  if (payload.fileBase64 && payload.fileName) {
+    const sub = getOrCreateFolder(rootFolder, row.jenisDokumen || 'Lainnya')
+    fileUrl = uploadBase64File(payload.fileBase64, payload.fileName, sub).getUrl()
+  }
+
+  // Update baris
+  sheet.getRange(targetRow, 1, 1, SHEET_HEADERS.length).setValues([[
+    row.id||'', row.nama||'', row.nis||'', row.nisn||'', row.jk||'',
+    row.tempatLahir||'', row.tanggalLahir||'', row.agama||'', row.alamat||'',
+    row.sekolahAsal||'', row.jenisDokumen||'', row.keterangan||'',
+    row.namaFile||payload.fileName||'', fileUrl,
+    row.tanggalInput||new Date().toLocaleDateString('id-ID')
+  ]])
+  return { success: true, fileUrl }
 }
 
 function getOrCreateFolder(parent, name) {
