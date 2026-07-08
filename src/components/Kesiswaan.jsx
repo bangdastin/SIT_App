@@ -11,6 +11,27 @@ const GAS_URL = import.meta.env.VITE_GAS_KESISWAAN_URL || ''
 
 const JENIS_DOKUMEN = ['Ijazah SD','Ijazah SMP','Akte','Kartu Keluarga','Nilai Raport','SKP']
 
+// Normalisasi nama jenis dokumen lama → nama standar
+const NORMALISASI_JENIS = {
+  'ijazah sd': 'Ijazah SD',
+  'ijazah smp': 'Ijazah SMP',
+  'ijazah jenjang sebelumnya dan smp': 'Ijazah SMP',
+  'ijazah jenjang sebelumnya': 'Ijazah SD',
+  'akte': 'Akte',
+  'akte kelahiran': 'Akte',
+  'kartu keluarga': 'Kartu Keluarga',
+  'kk': 'Kartu Keluarga',
+  'nilai raport': 'Nilai Raport',
+  'raport': 'Nilai Raport',
+  'skp': 'SKP',
+}
+
+function normalisasiJenis(raw) {
+  if (!raw) return JENIS_DOKUMEN[0]
+  const key = raw.toLowerCase().trim()
+  return NORMALISASI_JENIS[key] || raw
+}
+
 const COLUMNS = [
   { key: 'nama',         label: 'Nama Murid' },
   { key: 'nis',          label: 'NIS' },
@@ -58,7 +79,7 @@ function mapRow(r) {
     tanggalLahir: pick(r, 'Tanggal Lahir', 'Tanggal_Lahir', 'tanggalLahir'),
     agama: pick(r, 'Agama', 'agama'), alamat,
     sekolahAsal: pick(r, 'Sekolah Asal', 'Sekolah_Asal', 'sekolahAsal'),
-    jenisDokumen: pick(r, 'Jenis Dokumen', 'jenisDokumen') || JENIS_DOKUMEN[0],
+    jenisDokumen: normalisasiJenis(pick(r, 'Jenis Dokumen', 'jenisDokumen')),
     keterangan: pick(r, 'Keterangan', 'Catatan', 'keterangan'),
     namaFile: pick(r, 'File', 'Nama File', 'namaFile'),
     tanggalInput: pick(r, 'Tanggal Input', 'tanggalInput') || new Date().toLocaleDateString('id-ID'),
@@ -74,7 +95,11 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 })
 
 export default function Kesiswaan() {
-  const [data, setData]           = useState(() => loadFromStorage(KEY))
+  const [data, setData] = useState(() => {
+    // Normalisasi jenisDokumen data lama saat pertama load
+    const stored = loadFromStorage(KEY)
+    return stored.map(d => ({ ...d, jenisDokumen: normalisasiJenis(d.jenisDokumen) }))
+  })
   const [form, setForm]           = useState(EMPTY)
   const [pendingFile, setPending] = useState(null)
   const [modal, setModal]         = useState(null)
@@ -239,22 +264,12 @@ export default function Kesiswaan() {
     <div className="space-y-6 max-w-screen-xl">
       {toast && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
       <div className="flex gap-4 overflow-x-auto pb-2">
-        {(() => {
-          // Tampilkan semua jenis dokumen unik dari data yang ada
-          const allJenis = [...new Set(data.map(d => d.jenisDokumen).filter(Boolean))]
-          if (allJenis.length === 0) return JENIS_DOKUMEN.map(j => (
-            <div key={j} className="card py-4 min-w-36 flex-shrink-0">
-              <p className="text-2xl font-bold text-indigo-600">0</p>
-              <p className="text-xs text-slate-500 mt-1 leading-snug">{j}</p>
-            </div>
-          ))
-          return allJenis.map(j => (
-            <div key={j} className="card py-4 min-w-36 flex-shrink-0">
-              <p className="text-2xl font-bold text-indigo-600">{data.filter(d => d.jenisDokumen === j).length}</p>
-              <p className="text-xs text-slate-500 mt-1 leading-snug">{j}</p>
-            </div>
-          ))
-        })()}
+        {JENIS_DOKUMEN.map(j => (
+          <div key={j} className="card py-4 min-w-36 flex-shrink-0">
+            <p className="text-2xl font-bold text-indigo-600">{data.filter(d => d.jenisDokumen === j).length}</p>
+            <p className="text-xs text-slate-500 mt-1 leading-snug">{j}</p>
+          </div>
+        ))}
       </div>
 
       <div className="card">
