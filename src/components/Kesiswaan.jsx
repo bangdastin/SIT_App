@@ -9,7 +9,8 @@ import { saveFile, getFileURL, deleteFile } from '../utils/fileDB'
 const KEY = 'sit_kesiswaan'
 const GAS_URL = import.meta.env.VITE_GAS_KESISWAAN_URL || ''
 
-const JENIS_DOKUMEN = ['Ijazah SD','Ijazah SMP','Akte','Kartu Keluarga','Nilai Raport','SKP']
+// SKP telah dihapus dari kategori dokumen
+const JENIS_DOKUMEN = ['Ijazah SD','Ijazah SMP','Akte','Kartu Keluarga','Nilai Raport']
 
 // Normalisasi nama jenis dokumen lama → nama standar
 const NORMALISASI_JENIS = {
@@ -37,6 +38,7 @@ function normalisasiJenis(raw) {
   return NORMALISASI_JENIS[key] || raw
 }
 
+// Kolom tanggalInput telah dihapus dari tabel
 const COLUMNS = [
   { key: 'nama',         label: 'Nama Murid' },
   { key: 'nis',          label: 'NIS' },
@@ -50,7 +52,6 @@ const COLUMNS = [
   { key: 'jenisDokumen', label: 'Jenis Dokumen' },
   { key: 'keterangan',   label: 'Keterangan' },
   { key: 'namaFile',     label: 'File' },
-  { key: 'tanggalInput', label: 'Tgl. Input' },
   { key: 'aksi',         label: 'Aksi' },
 ]
 
@@ -101,7 +102,6 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 
 export default function Kesiswaan() {
   const [data, setData] = useState(() => {
-    // Normalisasi jenisDokumen data lama saat pertama load
     const stored = loadFromStorage(KEY)
     return stored.map(d => ({ ...d, jenisDokumen: normalisasiJenis(d.jenisDokumen) }))
   })
@@ -268,7 +268,7 @@ export default function Kesiswaan() {
   return (
     <div className="space-y-6 max-w-screen-xl">
       {toast && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {JENIS_DOKUMEN.map(j => (
           <div key={j} className="card py-5 px-4">
             <p className="text-3xl font-bold text-indigo-600">{data.filter(d => d.jenisDokumen === j).length}</p>
@@ -451,7 +451,7 @@ export default function Kesiswaan() {
                     {isLoading ? 'Menyimpan...' : 'Simpan Perubahan'}
                   </button>
                   <button onClick={cancelEdit} className="btn-secondary flex-1">Batal</button>
-                </>
+                </                >
               ) : (
                 <>
                   <button onClick={startEdit} className="btn-primary flex-1">Edit Data</button>

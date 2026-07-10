@@ -9,13 +9,12 @@ import { saveFile, getFileURL, deleteFile } from '../utils/fileDB'
 const KEY = 'sit_kepegawaian'
 const KATEGORI = ['Dokumen Pribadi', 'Dokumen Kepegawaian', 'Dokumen Absensi', 'SKP']
 const COLUMNS = [
-  { key: 'nama',         label: 'Nama Pegawai' },
-  { key: 'nipnik',       label: 'NIP / NRK' },
-  { key: 'kategori',     label: 'Kategori' },
-  { key: 'keterangan',   label: 'Keterangan' },
-  { key: 'namaFile',     label: 'File' },
-  { key: 'tanggalInput', label: 'Tanggal Input' },
-  { key: 'aksi',         label: 'Aksi' },
+  { key: 'nama',       label: 'Nama Pegawai' },
+  { key: 'nipnik',     label: 'NIP / NRK' },
+  { key: 'kategori',   label: 'Kategori' },
+  { key: 'keterangan', label: 'Keterangan' },
+  { key: 'namaFile',   label: 'File' },
+  { key: 'aksi',       label: 'Aksi' },
 ]
 const EMPTY = { nama: '', nipnik: '', kategori: '', keterangan: '', namaFile: '' }
 
@@ -49,7 +48,7 @@ export default function Kepegawaian() {
     if (!form.nipnik.trim()) return alert('NIP / NRK wajib diisi.')
     if (!form.kategori)      return alert('Kategori Dokumen wajib dipilih.')
     const id  = generateId()
-    const row = { ...form, id, tanggalInput: new Date().toLocaleDateString('id-ID') }
+    const row = { ...form, id }
     if (pendingFile) await saveFile(id, pendingFile)
     const next = [...data, row]; setData(next); saveToStorage(KEY, next)
     setForm(EMPTY); setPending(null); showToast('Data berhasil ditambahkan')
@@ -93,7 +92,6 @@ export default function Kepegawaian() {
       kategori:     r['Kategori Dokumen'] || r['Kategori'] || r['kategori']   || KATEGORI[0],
       keterangan:   r['Keterangan']    || r['Catatan']     || r['keterangan'] || '',
       namaFile:     r['File']          || r['Nama File']   || r['namaFile']   || '',
-      tanggalInput: r['Tanggal Input'] || r['Tanggal']     || new Date().toLocaleDateString('id-ID'),
     }))
     const next = [...data, ...mapped]; setData(next); saveToStorage(KEY, next)
     showToast('Data berhasil ditambahkan')
@@ -207,7 +205,7 @@ export default function Kepegawaian() {
                 <div className="px-6 py-5 grid grid-cols-2 gap-x-6 gap-y-3">
                   {[['Nama Pegawai', modal.row.nama], ['NIP / NRK', modal.row.nipnik],
                     ['Kategori', modal.row.kategori], ['Keterangan', modal.row.keterangan],
-                    ['Tanggal Input', modal.row.tanggalInput], ['File', modal.row.namaFile || '-'],
+                    ['File', modal.row.namaFile || '-'],
                   ].map(([k, v]) => (
                     <div key={k} className="text-sm">
                       <p className="text-slate-400 text-xs mb-0.5">{k}</p>

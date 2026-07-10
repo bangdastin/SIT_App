@@ -13,7 +13,6 @@ const COLUMNS = [
   { key: 'jenisKIB',     label: 'Jenis KIB' },
   { key: 'namaFile',     label: 'Nama Dokumen' },
   { key: 'tahun',        label: 'Tahun' },
-  { key: 'tanggalInput', label: 'Tanggal Input' },
   { key: 'aksi',         label: 'Aksi' },
 ]
 
@@ -47,7 +46,7 @@ export default function Sarana() {
     if (!form.tahun.trim()) return alert('Tahun wajib diisi.')
     if (!form.namaFile)     return alert('File dokumen wajib diupload.')
     const id  = generateId()
-    const row = { ...form, id, tanggalInput: new Date().toLocaleDateString('id-ID') }
+    const row = { ...form, id }
     if (pendingFile) await saveFile(id, pendingFile)
     const next = [...data, row]; setData(next); saveToStorage(KEY, next)
     setForm(EMPTY); setPending(null); showToast('Data berhasil ditambahkan')
@@ -88,7 +87,6 @@ export default function Sarana() {
       jenisKIB:     r['Jenis KIB']    || r['jenisKIB']  || r['KIB']        || JENIS_KIB[0],
       namaFile:     r['Nama Dokumen'] || r['Nama File'] || r['namaFile']   || '',
       tahun:        String(r['Tahun'] || r['tahun']     || ''),
-      tanggalInput: r['Tanggal Input']|| r['Tanggal']   || new Date().toLocaleDateString('id-ID'),
     }))
     const next = [...data, ...mapped]; setData(next); saveToStorage(KEY, next)
     showToast('Data berhasil ditambahkan')
@@ -186,7 +184,7 @@ export default function Sarana() {
               <>
                 <div className="px-6 py-5 grid grid-cols-2 gap-x-6 gap-y-3">
                   {[['Jenis KIB', modal.row.jenisKIB], ['Tahun', modal.row.tahun],
-                    ['Nama Dokumen', modal.row.namaFile || '-'], ['Tanggal Input', modal.row.tanggalInput],
+                    ['Nama Dokumen', modal.row.namaFile || '-'],
                   ].map(([k, v]) => (
                     <div key={k} className="text-sm">
                       <p className="text-slate-400 text-xs mb-0.5">{k}</p>
