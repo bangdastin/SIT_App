@@ -1,80 +1,119 @@
 import { useState } from 'react'
 import DataTable from './DataTable'
 import ExcelUpload from './ExcelUpload'
-import DocViewer from './DocViewer'
 import Toast, { useToast } from './Toast'
 import { saveToStorage, loadFromStorage, generateId } from '../utils/storage'
 import { saveFile, getFileURL, deleteFile } from '../utils/fileDB'
 
 const KEY = 'sit_persuratan'
+const GAS_URL = import.meta.env.VITE_GAS_PERSURATAN_URL || ''
 const KATEGORI = ['Surat Masuk', 'Surat Keluar']
-const EMPTY = { kategori: KATEGORI[0], tahun: '', namaFile: '' }
+const EMPTY = { kategori: KATEGORI[0], tahun: '' }
 const COLUMNS = [
-  { key: 'kategori',     label: 'Kategori Surat' },
-  { key: 'namaFile',     label: 'Nama Dokumen' },
-  { key: 'tahun',        label: 'Tahun' },
-  { key: 'aksi',         label: 'Aksi' },
+  { key: 'kategori', label: 'Kategori Surat' },
+  { key: 'tahun',    label: 'Tahun' },
+  { key: 'dokumen',  label: 'Dokumen' },
+  { key: 'aksi',     label: 'Aksi' },
 ]
 
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.readAsDataURL(file)
+  reader.onload = () => resolve(reader.result.split(',')[1])
+  reader.onerror = reject
+})
+
 export default function Persuratan() {
-  const [data, setData]           = useState(() => loadFromStorage(KEY))
+  const [data, setData]           = useState(() => {
+    // Migrasi data lama (namaFile flat) → format dokumen array
+    return loadFromStorage(KEY).map(d => {
+      if (!d.dokumen) {
+        return { ...d, dokumen: d.namaFile ? [{ namaFile: d.namaFile, fileId: d.id }] : [] }
+      }
+      return d
+    })
+  })
   const [form, setForm]           = useState(EMPTY)
-  const [pendingFile, setPending] = useState(null)
+  const [pendingDocs, setPendingDocs] = useState([]) // [{ file }]
   const [modal, setModal]         = useState(null)
   const [editMode, setEditMode]   = useState(false)
   const [editForm, setEditForm]   = useState(null)
-  const [editFile, setEditFile]   = useState(null)
+  const [editPendingDocs, setEditPendingDocs] = useState([])
   const [viewer, setViewer]       = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const { toast, showToast, closeToast } = useToast()
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const fe = (k, v) => setEditForm(p => ({ ...p, [k]: v }))
 
-  const handlePdfChange = (e) => {
-    const file = e.target.files[0]; if (!file) return
-    f('namaFile', file.name); setPending(file)
-  }
-
-  const handleEditFileChange = (e) => {
-    const file = e.target.files[0]; if (!file) return
-    setEditFile(file); fe('namaFile', file.name)
-  }
-
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.kategori)     return alert('Kategori Surat wajib dipilih.')
     if (!form.tahun.trim()) return alert('Tahun wajib diisi.')
-    if (!form.namaFile)     return alert('File surat wajib diupload.')
-    const id  = generateId()
-    const row = { ...form, id }
-    if (pendingFile) await saveFile(id, pendingFile)
-    const next = [...data, row]; setData(next); saveToStorage(KEY, next)
-    setForm(EMPTY); setPending(null); showToast('Data berhasil ditambahkan')
+    if (!pendingDocs.length || !pendingDocs.some(d => d.file)) return alert('Minimal 1 file surat wajib diupload.')
+    setIsLoading(true)
+    const id = generateId()
+    const dokumen = []
+    for (const d of pendingDocs) {
+      if (!d.file) continue
+      const fileId = `${id}_${dokumen.length}`
+      await saveFile(fileId, d.file)
+      dokumen.push({ namaFile: d.file.name, fileId })
+    }
+    const row = { ...form, id, dokumen, tanggalInput: new Date().toLocaleDateString('id-ID') }
+    try {
+      if (GAS_URL) {
+        const docsBase64 = []
+        for (const d of pendingDocs) {
+          if (d.file) docsBase64.push({ fileName: d.file.name, base64: await fileToBase64(d.file) })
+        }
+        await fetch(GAS_URL, {
+          method: 'POST', mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'uploadRow', rowData: row, files: docsBase64 }),
+        })
+      }
+      const next = [...data, row]; setData(next); saveToStorage(KEY, next)
+      setForm(EMPTY); setPendingDocs([]); showToast('Data berhasil ditambahkan')
+    } catch {
+      const next = [...data, row]; setData(next); saveToStorage(KEY, next)
+      setForm(EMPTY); setPendingDocs([]); showToast('Data berhasil ditambahkan')
+    } finally { setIsLoading(false) }
   }
 
   const handleSaveEdit = async () => {
     if (!editForm.tahun?.trim()) return alert('Tahun wajib diisi.')
     setIsLoading(true)
     try {
-      let updatedRow = { ...editForm }
-      if (editFile) {
-        await saveFile(editForm.id, editFile)
-        updatedRow.namaFile = editFile.name
+      const existing = [...(editForm.dokumen || [])]
+      for (const d of editPendingDocs) {
+        if (!d.file) continue
+        const fileId = `${editForm.id}_${existing.length}`
+        await saveFile(fileId, d.file)
+        existing.push({ namaFile: d.file.name, fileId })
       }
+      const updatedRow = { ...editForm, dokumen: existing }
       const next = data.map(d => d.id === updatedRow.id ? updatedRow : d)
       setData(next); saveToStorage(KEY, next)
-      setModal({ row: updatedRow, fileUrl: editFile ? await getFileURL(updatedRow.id) : modal.fileUrl })
-      setEditMode(false); setEditFile(null)
+      setModal({ row: updatedRow }); setEditMode(false); setEditPendingDocs([])
       showToast('Data berhasil diperbarui')
     } catch (err) {
-      console.error(err); showToast('Gagal menyimpan perubahan', 'error')
+      console.error(err); showToast('Gagal menyimpan', 'error')
     } finally { setIsLoading(false) }
   }
 
   const handleDelete = async (indices) => {
     for (const i of indices) {
       const row = data[i]
-      if (row?.id && row?.namaFile) await deleteFile(row.id)
+      if (row?.dokumen) {
+        for (const d of row.dokumen) { if (d.fileId) await deleteFile(d.fileId) }
+      }
+      if (GAS_URL && row?.id) {
+        fetch(GAS_URL, {
+          method: 'POST', mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'deleteRow', id: row.id }),
+        }).catch(() => {})
+      }
     }
     const idxSet = new Set(indices)
     const next = data.filter((_, x) => !idxSet.has(x))
@@ -84,30 +123,24 @@ export default function Persuratan() {
   const handleExcel = (rows) => {
     const mapped = rows.map(r => ({
       id: generateId(),
-      kategori:     r['Kategori Surat'] || r['Kategori']  || r['kategori']  || KATEGORI[0],
-      namaFile:     r['Nama Dokumen']   || r['Nama File'] || r['namaFile']  || '',
-      tahun:        String(r['Tahun']   || r['tahun']     || ''),
+      kategori:     r['Kategori Surat'] || r['Kategori'] || r['kategori'] || KATEGORI[0],
+      tahun:        String(r['Tahun'] || r['tahun'] || ''),
+      dokumen:      r['Nama Dokumen'] || r['namaFile'] ? [{ namaFile: r['Nama Dokumen'] || r['namaFile'] || '', fileId: null }] : [],
+      tanggalInput: r['Tanggal Input'] || new Date().toLocaleDateString('id-ID'),
     }))
     const next = [...data, ...mapped]; setData(next); saveToStorage(KEY, next)
     showToast('Data berhasil ditambahkan')
   }
 
-  const openDetail = async (row) => {
-    let fileUrl = null
-    if (row.id && row.namaFile) { try { fileUrl = await getFileURL(row.id) } catch { /* not found */ } }
-    setModal({ row, fileUrl }); setEditMode(false); setEditFile(null)
-  }
-
-  const startEdit = () => { setEditForm({ ...modal.row }); setEditMode(true); setEditFile(null) }
-  const cancelEdit = () => { setEditMode(false); setEditFile(null) }
-
   const renderCell = (col, row) => {
     if (col.key === 'aksi') return (
-      <button onClick={() => openDetail(row)}
-        className="text-indigo-600 hover:text-indigo-800 text-xs font-semibold underline underline-offset-2">
-        Lihat Detail
-      </button>
+      <button onClick={() => { setModal({ row }); setEditMode(false); setEditPendingDocs([]) }}
+        className="text-indigo-600 hover:text-indigo-800 text-xs font-semibold underline underline-offset-2">Lihat Detail</button>
     )
+    if (col.key === 'dokumen') {
+      const docs = row.dokumen || []
+      return docs.length ? <span className="text-xs">{docs.map(d => d.namaFile).join(', ')}</span> : <span className="text-xs text-slate-400">-</span>
+    }
     return row[col.key] || '-'
   }
 
@@ -126,23 +159,38 @@ export default function Persuratan() {
       <div className="card">
         <p className="section-title">Input Data Surat</p>
         <form onSubmit={handleSubmit}>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
             <div><label className="label">Kategori Surat <span className="text-rose-400 normal-case">*</span></label>
               <select className="input" value={form.kategori} onChange={e => f('kategori', e.target.value)}>
                 {KATEGORI.map(k => <option key={k}>{k}</option>)}
               </select></div>
             <div><label className="label">Tahun <span className="text-rose-400 normal-case">*</span></label>
               <input className="input" value={form.tahun} onChange={e => f('tahun', e.target.value)} placeholder="Contoh: 2024" /></div>
-            <div><label className="label">Upload File Surat (PDF) <span className="text-rose-400 normal-case">*</span></label>
-              <label className="cursor-pointer flex items-center border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm px-4 py-2.5 rounded-xl transition">
-                <span className="truncate">{form.namaFile || 'Pilih File PDF'}</span>
-                <input type="file" accept=".pdf" className="hidden" onChange={handlePdfChange} />
-              </label></div>
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between mb-2">
+                <label className="label mb-0">Upload File Surat (PDF) <span className="text-rose-400 normal-case">*</span></label>
+                <button type="button" onClick={() => setPendingDocs(p => [...p, { file: null }])}
+                  className="text-xs text-indigo-600 border border-indigo-300 px-3 py-1 rounded-lg font-semibold">+ Tambah File</button>
+              </div>
+              {pendingDocs.length === 0 && <p className="text-xs text-slate-400 italic">Klik "+ Tambah File" untuk upload surat</p>}
+              <div className="space-y-2">
+                {pendingDocs.map((d, i) => (
+                  <div key={i} className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                    <label className="cursor-pointer flex-1 min-w-0 border border-dashed border-slate-300 bg-white hover:bg-slate-100 text-slate-600 text-sm px-4 py-2 rounded-xl transition truncate">
+                      {d.file ? d.file.name : 'Pilih File PDF'}
+                      <input type="file" accept=".pdf" className="hidden"
+                        onChange={e => { const file = e.target.files[0]; if (file) setPendingDocs(p => p.map((x, idx) => idx === i ? { ...x, file } : x)) }} />
+                    </label>
+                    <button type="button" onClick={() => setPendingDocs(p => p.filter((_, idx) => idx !== i))} className="text-rose-400 hover:text-rose-600 text-xl leading-none font-bold">&times;</button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-100">
-            <button type="submit" className="btn-primary">Simpan</button>
+            <button type="submit" disabled={isLoading} className="btn-primary">{isLoading ? 'Menyimpan...' : 'Simpan'}</button>
             <ExcelUpload onData={handleExcel} />
-            <button type="button" onClick={() => { setForm(EMPTY); setPending(null) }} className="btn-secondary">Reset</button>
+            <button type="button" onClick={() => { setForm(EMPTY); setPendingDocs([]) }} className="btn-secondary">Reset</button>
           </div>
         </form>
       </div>
@@ -164,78 +212,74 @@ export default function Persuratan() {
             </div>
 
             {editMode && editForm ? (
-              <div className="px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><label className="label">Kategori Surat</label>
-                  <select className="input" value={editForm.kategori} onChange={e => fe('kategori', e.target.value)}>
-                    {KATEGORI.map(k => <option key={k}>{k}</option>)}
-                  </select></div>
-                <div><label className="label">Tahun</label>
-                  <input className="input" value={editForm.tahun} onChange={e => fe('tahun', e.target.value)} /></div>
-                <div className="sm:col-span-2">
-                  <label className="label">Upload Dokumen Baru (PDF)</label>
-                  <label className="cursor-pointer inline-flex items-center gap-2 border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm px-4 py-2.5 rounded-xl transition">
-                    {editFile ? editFile.name : (editForm.namaFile ? `Ganti: ${editForm.namaFile}` : 'Pilih File PDF')}
-                    <input type="file" accept=".pdf" className="hidden" onChange={handleEditFileChange} />
-                  </label>
-                  {editFile && <span className="ml-3 text-xs text-emerald-600 font-medium">File baru dipilih</span>}
+              <div className="px-6 py-5 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div><label className="label">Kategori Surat</label>
+                    <select className="input" value={editForm.kategori} onChange={e => fe('kategori', e.target.value)}>
+                      {KATEGORI.map(k => <option key={k}>{k}</option>)}
+                    </select></div>
+                  <div><label className="label">Tahun</label>
+                    <input className="input" value={editForm.tahun} onChange={e => fe('tahun', e.target.value)} /></div>
+                </div>
+                {(editForm.dokumen || []).length > 0 && (
+                  <div>
+                    <p className="label mb-2">File Tersimpan</p>
+                    {editForm.dokumen.map((d, i) => (
+                      <div key={i} className="flex items-center gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2 mb-2 text-sm">
+                        <span className="text-slate-600 flex-1 truncate">{d.namaFile}</span>
+                        <button type="button" onClick={() => fe('dokumen', editForm.dokumen.filter((_, idx) => idx !== i))} className="text-rose-400 hover:text-rose-600 text-lg">&times;</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="label mb-0">Upload File Baru</p>
+                    <button type="button" onClick={() => setEditPendingDocs(p => [...p, { file: null }])} className="text-xs text-indigo-600 border border-indigo-300 px-3 py-1 rounded-lg font-semibold">+ Tambah File</button>
+                  </div>
+                  <div className="space-y-2">
+                    {editPendingDocs.map((d, i) => (
+                      <div key={i} className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                        <label className="cursor-pointer flex-1 border border-dashed border-slate-300 bg-white hover:bg-slate-100 text-slate-600 text-sm px-4 py-2 rounded-xl transition truncate">
+                          {d.file ? d.file.name : 'Pilih File PDF'}
+                          <input type="file" accept=".pdf" className="hidden"
+                            onChange={e => { const file = e.target.files[0]; if (file) setEditPendingDocs(p => p.map((x, idx) => idx === i ? { ...x, file } : x)) }} />
+                        </label>
+                        <button type="button" onClick={() => setEditPendingDocs(p => p.filter((_, idx) => idx !== i))} className="text-rose-400 hover:text-rose-600 text-xl leading-none font-bold">&times;</button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             ) : (
-              <>
-                <div className="px-6 py-5 grid grid-cols-2 gap-x-6 gap-y-3">
-                  {[['Kategori Surat', modal.row.kategori], ['Tahun', modal.row.tahun],
-                    ['Nama Dokumen', modal.row.namaFile || '-'],
-                  ].map(([k, v]) => (
-                    <div key={k} className="text-sm">
-                      <p className="text-slate-400 text-xs mb-0.5">{k}</p>
-                      <p className="text-slate-800 font-medium">{v || '-'}</p>
-                    </div>
+              <div className="px-6 py-5">
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 mb-4">
+                  {[['Kategori Surat', modal.row.kategori], ['Tahun', modal.row.tahun]].map(([k, v]) => (
+                    <div key={k} className="text-sm"><p className="text-slate-400 text-xs mb-0.5">{k}</p><p className="text-slate-800 font-medium">{v || '-'}</p></div>
                   ))}
                 </div>
-                {modal.fileUrl ? (
-                  <div className="px-6 pb-2">
-                    <p className="text-xs text-slate-400 mb-2">Pratinjau Dokumen</p>
-                    <DocViewer src={modal.fileUrl} fileName={modal.row.namaFile} />
-                  </div>
+                <p className="text-xs text-slate-400 mb-2 font-medium">File Surat</p>
+                {(modal.row.dokumen || []).length === 0 ? (
+                  <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl py-5 text-center text-sm text-slate-400">Belum ada file.</div>
                 ) : (
-                  <div className="px-6 pb-4">
-                    <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl py-6 text-center text-sm text-slate-400">
-                      {modal.row.namaFile ? 'File tidak ditemukan di penyimpanan.' : 'Tidak ada file dokumen.'}
-                      <div className="mt-3">
-                        <label className="cursor-pointer inline-flex items-center gap-2 border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-medium px-4 py-2 rounded-xl transition">
-                          Upload Dokumen PDF
-                          <input type="file" accept=".pdf" className="hidden" onChange={async (e) => {
-                            const file = e.target.files[0]; if (!file) return
-                            await saveFile(modal.row.id, file)
-                            const fileUrl = await getFileURL(modal.row.id)
-                            const updatedRow = { ...modal.row, namaFile: file.name }
-                            const next = data.map(d => d.id === modal.row.id ? updatedRow : d)
-                            setData(next); saveToStorage(KEY, next)
-                            setModal({ row: updatedRow, fileUrl })
-                            showToast('Dokumen berhasil diupload')
-                          }} />
-                        </label>
-                      </div>
-                    </div>
+                  <div className="space-y-2">
+                    {modal.row.dokumen.map((d, i) => (
+                      <SuratDocItem key={i} doc={d} onView={url => setViewer(url)} />
+                    ))}
                   </div>
                 )}
-              </>
+              </div>
             )}
 
-            <div className="px-6 pb-6 mt-2 flex flex-wrap gap-2">
+            <div className="px-6 pb-6 mt-2 flex gap-2">
               {editMode ? (
                 <>
-                  <button onClick={handleSaveEdit} disabled={isLoading} className="btn-primary flex-1">
-                    {isLoading ? 'Menyimpan...' : 'Simpan Perubahan'}
-                  </button>
-                  <button onClick={cancelEdit} className="btn-secondary flex-1">Batal</button>
+                  <button onClick={handleSaveEdit} disabled={isLoading} className="btn-primary flex-1">{isLoading ? 'Menyimpan...' : 'Simpan Perubahan'}</button>
+                  <button onClick={() => { setEditMode(false); setEditPendingDocs([]) }} className="btn-secondary flex-1">Batal</button>
                 </>
               ) : (
                 <>
-                  <button onClick={startEdit} className="btn-primary flex-1">Edit Data</button>
-                  {modal.fileUrl && (
-                    <button onClick={() => { setViewer(modal.fileUrl); setModal(null) }} className="btn-secondary flex-1">Buka Layar Penuh</button>
-                  )}
+                  <button onClick={() => { setEditForm({ ...modal.row }); setEditMode(true); setEditPendingDocs([]) }} className="btn-primary flex-1">Edit Data</button>
                   <button onClick={() => setModal(null)} className="btn-secondary flex-1">Tutup</button>
                 </>
               )}
@@ -253,6 +297,20 @@ export default function Persuratan() {
           <iframe src={viewer} className="flex-1 w-full" title="Dokumen" />
         </div>
       )}
+    </div>
+  )
+}
+
+function SuratDocItem({ doc, onView }) {
+  const [url, setUrl] = useState(null)
+  useState(() => {
+    if (doc.fileId) getFileURL(doc.fileId).then(setUrl).catch(() => {})
+    else if (doc.urlDrive) setUrl(doc.urlDrive)
+  }, [])
+  return (
+    <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+      <span className="text-slate-600 flex-1 truncate">{doc.namaFile || '-'}</span>
+      {url && <button onClick={() => onView(url)} className="text-indigo-600 hover:text-indigo-800 text-xs font-semibold underline flex-shrink-0">Lihat</button>}
     </div>
   )
 }

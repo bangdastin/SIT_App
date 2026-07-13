@@ -25,8 +25,8 @@ export default function Sidebar({ active, onSelect, onLogout, user, mobileOpen, 
               <span className="text-white text-xs font-black">SIT</span>
             </div>
             <div>
-              <p className="text-white text-sm font-bold leading-tight">SIT Terpadu</p>
-              <p className="text-slate-500 text-xs">Sistem Informasi</p>
+              <p className="text-white text-sm font-bold leading-tight">Sistem Informasi Terpadu</p>
+              <p className="text-slate-400 text-xs">SMPN 82 Jakarta</p>
             </div>
           </div>
         </div>

@@ -38,7 +38,28 @@ function normalisasiJenis(raw) {
   return NORMALISASI_JENIS[key] || raw
 }
 
-// Kolom tanggalInput telah dihapus dari tabel
+// Format tanggal dari input[type=date] (yyyy-mm-dd) → dd/mm/yyyy untuk display
+function formatTanggalDisplay(val) {
+  if (!val) return ''
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(val)) return val // sudah dd/mm/yyyy
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    const [y, m, d] = val.split('-')
+    return `${d}/${m}/${y}`
+  }
+  return val
+}
+
+// Konversi dd/mm/yyyy → yyyy-mm-dd untuk value input[type=date]
+function toInputDate(val) {
+  if (!val) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(val)) {
+    const [d, m, y] = val.split('/')
+    return `${y}-${m}-${d}`
+  }
+  return val
+}
+
 const COLUMNS = [
   { key: 'nama',         label: 'Nama Murid' },
   { key: 'nis',          label: 'NIS' },
@@ -107,10 +128,12 @@ export default function Kesiswaan() {
   })
   const [form, setForm]           = useState(EMPTY)
   const [pendingFile, setPending] = useState(null)
+  const [pendingDocs, setPendingDocs] = useState([]) // multi-dokumen: [{ jenis, file }]
   const [modal, setModal]         = useState(null)
   const [editMode, setEditMode]   = useState(false)
   const [editForm, setEditForm]   = useState(null)
   const [editFile, setEditFile]   = useState(null)
+  const [editPendingDocs, setEditPendingDocs] = useState([]) // dokumen tambahan saat edit
   const [viewer, setViewer]       = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const { toast, showToast, closeToast } = useToast()
@@ -157,28 +180,37 @@ export default function Kesiswaan() {
     if (!form.jenisDokumen)                 return alert('Jenis Dokumen wajib dipilih.')
     setIsLoading(true)
     const id  = generateId()
-    const row = { ...form, id, tanggalInput: new Date().toLocaleDateString('id-ID') }
+    const row = { ...form, id, tanggalLahir: formatTanggalDisplay(form.tanggalLahir), tanggalInput: new Date().toLocaleDateString('id-ID') }
     let fileBase64 = null; let fileName = null
     try {
+      // Simpan dokumen utama (jika ada single file dari form lama)
       if (pendingFile) {
         fileBase64 = await fileToBase64(pendingFile)
         fileName = pendingFile.name
         await saveFile(id, pendingFile)
       }
+      // Simpan multi-dokumen
+      const docsMap = {}
+      for (const d of pendingDocs) {
+        if (!d.file) continue
+        const fileId = `${id}_${d.jenis.replace(/\s+/g,'_')}`
+        await saveFile(fileId, d.file)
+        docsMap[d.jenis] = { namaFile: d.file.name, fileId, base64: GAS_URL ? await fileToBase64(d.file) : null }
+      }
       if (!GAS_URL) {
         const next = [...data, row]; setData(next); saveToStorage(KEY, next)
-        setForm(EMPTY); setPending(null); showToast('Data berhasil ditambahkan'); return
+        setForm(EMPTY); setPending(null); setPendingDocs([]); showToast('Data berhasil ditambahkan'); return
       }
       await fetch(GAS_URL, {
         method: 'POST', mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'uploadRow', rowData: row, fileBase64, fileName }),
+        body: JSON.stringify({ action: 'uploadRow', rowData: row, fileBase64, fileName, dokumen: docsMap }),
       })
       const next = [...data, row]; setData(next); saveToStorage(KEY, next)
-      setForm(EMPTY); setPending(null); showToast('Data berhasil ditambahkan')
+      setForm(EMPTY); setPending(null); setPendingDocs([]); showToast('Data berhasil ditambahkan')
     } catch {
       const next = [...data, row]; setData(next); saveToStorage(KEY, next)
-      setForm(EMPTY); setPending(null); showToast('Data berhasil ditambahkan')
+      setForm(EMPTY); setPending(null); setPendingDocs([]); showToast('Data berhasil ditambahkan')
     } finally { setIsLoading(false) }
   }
 
@@ -187,15 +219,25 @@ export default function Kesiswaan() {
     if (!editForm.nis.trim())  return alert('NIS wajib diisi.')
     setIsLoading(true)
     try {
-      let updatedRow = { ...editForm }
+      let updatedRow = { ...editForm, tanggalLahir: formatTanggalDisplay(editForm.tanggalLahir) }
+      // Ganti file utama jika ada
       if (editFile) {
         await saveFile(editForm.id, editFile)
         updatedRow.namaFile = editFile.name
       }
+      // Simpan dokumen tambahan saat edit
+      for (const d of editPendingDocs) {
+        if (!d.file) continue
+        const fileId = `${editForm.id}_${d.jenis.replace(/\s+/g,'_')}`
+        await saveFile(fileId, d.file)
+        // Simpan info ke field khusus per jenis
+        if (!updatedRow.dokumenTambahan) updatedRow.dokumenTambahan = {}
+        updatedRow.dokumenTambahan[d.jenis] = { namaFile: d.file.name, fileId }
+      }
       const next = data.map(d => d.id === updatedRow.id ? updatedRow : d)
       setData(next); saveToStorage(KEY, next)
       setModal({ row: updatedRow, fileUrl: editFile ? await getFileURL(updatedRow.id) : modal.fileUrl })
-      setEditMode(false); setEditFile(null)
+      setEditMode(false); setEditFile(null); setEditPendingDocs([])
       showToast('Data berhasil diperbarui')
     } catch (err) {
       console.error(err); showToast('Gagal menyimpan perubahan', 'error')
@@ -205,7 +247,21 @@ export default function Kesiswaan() {
   const handleDelete = async (indices) => {
     for (const i of indices) {
       const row = data[i]
+      // Hapus file lokal
       if (row?.id && row?.namaFile) await deleteFile(row.id)
+      if (row?.dokumenTambahan) {
+        for (const d of Object.values(row.dokumenTambahan)) {
+          if (d.fileId) await deleteFile(d.fileId)
+        }
+      }
+      // Hapus dari spreadsheet + Drive via GAS
+      if (GAS_URL && row?.id) {
+        fetch(GAS_URL, {
+          method: 'POST', mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'deleteRow', id: row.id }),
+        }).catch(err => console.warn('Gagal hapus dari GAS:', err))
+      }
     }
     const idxSet = new Set(indices)
     const next = data.filter((_, x) => !idxSet.has(x))
@@ -244,10 +300,10 @@ export default function Kesiswaan() {
   }
 
   const startEdit = () => {
-    setEditForm({ ...modal.row }); setEditMode(true); setEditFile(null)
+    setEditForm({ ...modal.row, tanggalLahir: toInputDate(modal.row.tanggalLahir) }); setEditMode(true); setEditFile(null)
   }
 
-  const cancelEdit = () => { setEditMode(false); setEditFile(null) }
+  const cancelEdit = () => { setEditMode(false); setEditFile(null); setEditPendingDocs([]) }
 
   const renderCell = (col, row) => {
     if (col.key === 'aksi') return (
@@ -310,20 +366,40 @@ export default function Kesiswaan() {
             <div><label className="label">Keterangan</label>
               <input className="input" value={form.keterangan} onChange={e => f('keterangan', e.target.value)} placeholder="Opsional" /></div>
             <div className="sm:col-span-2 lg:col-span-3">
-              <label className="label">Upload File Dokumen (PDF)</label>
-              <div className="flex items-center gap-3 flex-wrap">
-                <label className="cursor-pointer border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm px-4 py-2.5 rounded-xl transition">
-                  Pilih File PDF
-                  <input type="file" accept=".pdf" className="hidden" onChange={handlePdfChange} />
-                </label>
-                {form.namaFile && <span className="text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg">{form.namaFile}</span>}
+              <div className="flex items-center justify-between mb-2">
+                <label className="label mb-0">Upload Dokumen (PDF)</label>
+                <button type="button" onClick={() => setPendingDocs(p => [...p, { jenis: JENIS_DOKUMEN[0], file: null }])}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold border border-indigo-300 px-3 py-1 rounded-lg">
+                  + Tambah Dokumen
+                </button>
+              </div>
+              {pendingDocs.length === 0 && (
+                <p className="text-xs text-slate-400 italic">Klik "+ Tambah Dokumen" untuk upload file PDF per jenis dokumen</p>
+              )}
+              <div className="space-y-2">
+                {pendingDocs.map((d, i) => (
+                  <div key={i} className="flex items-center gap-3 flex-wrap bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                    <select className="input w-44 py-1.5 text-sm flex-shrink-0"
+                      value={d.jenis}
+                      onChange={e => setPendingDocs(p => p.map((x, idx) => idx === i ? { ...x, jenis: e.target.value } : x))}>
+                      {JENIS_DOKUMEN.map(j => <option key={j}>{j}</option>)}
+                    </select>
+                    <label className="cursor-pointer flex-1 min-w-0 border border-dashed border-slate-300 bg-white hover:bg-slate-100 text-slate-600 text-sm px-4 py-2 rounded-xl transition truncate">
+                      {d.file ? d.file.name : 'Pilih File PDF'}
+                      <input type="file" accept=".pdf" className="hidden"
+                        onChange={e => { const file = e.target.files[0]; if (file) setPendingDocs(p => p.map((x, idx) => idx === i ? { ...x, file } : x)) }} />
+                    </label>
+                    <button type="button" onClick={() => setPendingDocs(p => p.filter((_, idx) => idx !== i))}
+                      className="text-rose-400 hover:text-rose-600 text-xl leading-none font-bold flex-shrink-0">&times;</button>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-100">
             <button type="submit" disabled={isLoading} className="btn-primary">{isLoading ? 'Menyimpan...' : 'Simpan'}</button>
             <div className={isLoading ? "pointer-events-none opacity-60" : ""}><ExcelUpload onData={handleExcel} /></div>
-            <button type="button" onClick={() => { setForm(EMPTY); setPending(null) }} className="btn-secondary">Reset</button>
+            <button type="button" onClick={() => { setForm(EMPTY); setPending(null); setPendingDocs([]) }} className="btn-secondary">Reset</button>
           </div>
         </form>
       </div>
@@ -375,13 +451,50 @@ export default function Kesiswaan() {
                 <div><label className="label">Keterangan</label>
                   <input className="input" value={editForm.keterangan} onChange={e => fe('keterangan', e.target.value)} /></div>
                 <div className="sm:col-span-2">
-                  <label className="label">Upload Dokumen Baru (PDF)</label>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <label className="cursor-pointer border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm px-4 py-2.5 rounded-xl transition">
-                      {editFile ? editFile.name : (editForm.namaFile ? `Ganti: ${editForm.namaFile}` : 'Pilih File PDF')}
-                      <input type="file" accept=".pdf" className="hidden" onChange={handleEditFileChange} />
-                    </label>
-                    {editFile && <span className="text-xs text-emerald-600 font-medium">File baru dipilih</span>}
+                  <label className="label">Upload / Ganti Dokumen (PDF)</label>
+                  <div className="space-y-2 mb-2">
+                    {/* File utama (namaFile) */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-xs text-slate-500 w-36 flex-shrink-0">{editForm.jenisDokumen || 'Dokumen Utama'}</span>
+                      <label className="cursor-pointer border border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm px-4 py-2.5 rounded-xl transition flex-1">
+                        {editFile ? editFile.name : (editForm.namaFile ? `Ganti: ${editForm.namaFile}` : 'Pilih File PDF')}
+                        <input type="file" accept=".pdf" className="hidden" onChange={handleEditFileChange} />
+                      </label>
+                      {editFile && <span className="text-xs text-emerald-600 font-medium">Baru</span>}
+                    </div>
+                  </div>
+                  {/* Dokumen tambahan per jenis */}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-slate-500">Dokumen jenis lain</span>
+                    <button type="button"
+                      onClick={() => setEditPendingDocs(p => [...p, { jenis: JENIS_DOKUMEN[0], file: null }])}
+                      className="text-xs text-indigo-600 border border-indigo-300 px-3 py-1 rounded-lg font-semibold">
+                      + Dokumen Baru
+                    </button>
+                  </div>
+                  {/* Dokumen tambahan existing */}
+                  {editForm.dokumenTambahan && Object.entries(editForm.dokumenTambahan).map(([jenis, doc]) => (
+                    <div key={jenis} className="flex items-center gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2 mb-2 text-sm">
+                      <span className="font-medium text-indigo-700 w-36 flex-shrink-0">{jenis}</span>
+                      <span className="text-slate-500 flex-1 truncate">{doc.namaFile}</span>
+                    </div>
+                  ))}
+                  <div className="space-y-2">
+                    {editPendingDocs.map((d, i) => (
+                      <div key={i} className="flex items-center gap-3 flex-wrap bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                        <select className="input w-44 py-1.5 text-sm flex-shrink-0" value={d.jenis}
+                          onChange={e => setEditPendingDocs(p => p.map((x, idx) => idx === i ? { ...x, jenis: e.target.value } : x))}>
+                          {JENIS_DOKUMEN.map(j => <option key={j}>{j}</option>)}
+                        </select>
+                        <label className="cursor-pointer flex-1 min-w-0 border border-dashed border-slate-300 bg-white hover:bg-slate-100 text-slate-600 text-sm px-4 py-2 rounded-xl transition truncate">
+                          {d.file ? d.file.name : 'Pilih File PDF'}
+                          <input type="file" accept=".pdf" className="hidden"
+                            onChange={e => { const file = e.target.files[0]; if (file) setEditPendingDocs(p => p.map((x, idx) => idx === i ? { ...x, file } : x)) }} />
+                        </label>
+                        <button type="button" onClick={() => setEditPendingDocs(p => p.filter((_, idx) => idx !== i))}
+                          className="text-rose-400 hover:text-rose-600 text-xl leading-none font-bold">&times;</button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -441,6 +554,17 @@ export default function Kesiswaan() {
                     </div>
                   </div>
                 )}
+                {/* Dokumen tambahan per jenis */}
+                {modal.row.dokumenTambahan && Object.entries(modal.row.dokumenTambahan).length > 0 && (
+                  <div className="px-6 pb-4">
+                    <p className="text-xs text-slate-400 mb-2">Dokumen Tambahan</p>
+                    <div className="space-y-2">
+                      {Object.entries(modal.row.dokumenTambahan).map(([jenis, doc]) => (
+                        <DokumenTambahanItem key={jenis} jenis={jenis} doc={doc} onView={url => setViewer(url)} />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
@@ -451,7 +575,7 @@ export default function Kesiswaan() {
                     {isLoading ? 'Menyimpan...' : 'Simpan Perubahan'}
                   </button>
                   <button onClick={cancelEdit} className="btn-secondary flex-1">Batal</button>
-                </                >
+                </>
               ) : (
                 <>
                   <button onClick={startEdit} className="btn-primary flex-1">Edit Data</button>
@@ -475,6 +599,21 @@ export default function Kesiswaan() {
           <iframe src={viewer} className="flex-1 w-full" title="Dokumen" />
         </div>
       )}
+    </div>
+  )
+}
+
+// Helper: tampilkan satu item dokumen tambahan di modal detail
+function DokumenTambahanItem({ jenis, doc, onView }) {
+  const [url, setUrl] = useState(null)
+  useEffect(() => {
+    if (doc.fileId) getFileURL(doc.fileId).then(setUrl).catch(() => {})
+  }, [doc.fileId])
+  return (
+    <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5 text-sm">
+      <span className="font-medium text-indigo-700 w-36 flex-shrink-0">{jenis}</span>
+      <span className="text-slate-500 flex-1 truncate">{doc.namaFile || '-'}</span>
+      {url && <button onClick={() => onView(url)} className="text-indigo-600 hover:text-indigo-800 text-xs font-semibold underline flex-shrink-0">Lihat</button>}
     </div>
   )
 }

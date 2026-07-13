@@ -46,9 +46,6 @@ export default function Dashboard({ user, onLogout }) {
           </button>
           <h2 className="font-bold text-slate-800">{pageTitles[activePage]}</h2>
           <div className="ml-auto flex items-center gap-3">
-            <span className="text-xs text-slate-400 hidden sm:block">
-              {new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            </span>
             <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-lg">
               {user}
             </span>
