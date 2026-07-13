@@ -77,8 +77,13 @@ function doGet(e) {
         // Baca kolom per jenis dokumen
         let col = 12
         for (const j of JENIS_DOKUMEN_LIST) {
-          const namaFile = String(r[col]||'')
-          const urlDrive = String(r[col+1]||'')
+          let namaFile = r[col]
+          let urlDrive = r[col+1]
+          // Jika nilai adalah Date object (karena format kolom spreadsheet), kosongkan
+          if (namaFile instanceof Date) namaFile = ''
+          else namaFile = String(namaFile||'').trim()
+          if (urlDrive instanceof Date) urlDrive = ''
+          else urlDrive = String(urlDrive||'').trim()
           if (namaFile || urlDrive) {
             obj.dokumen[j] = { namaFile, urlDrive }
           }
@@ -271,6 +276,10 @@ function getOrCreateMasterSheet(rootFolder) {
     sh.getRange(1,1,1,headers.length).setFontWeight('bold')
     sh.setFrozenRows(1)
     sh.hideColumns(1)
+    // Format kolom file dan URL sebagai plain text supaya tidak di-parse sebagai Date
+    for (let i = 13; i <= headers.length; i++) {
+      sh.getRange(2, i, sh.getMaxRows() - 1, 1).setNumberFormat('@STRING@')
+    }
   }
   return ss.getActiveSheet()
 }
@@ -284,4 +293,29 @@ function uploadBase64File(b64, fileName, folder) {
 
 function jsonResponse(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON)
+}
+
+/**
+ * Jalankan fungsi ini SEKALI di GAS editor (bukan via deploy) untuk reset header spreadsheet.
+ * Cara: buka GAS editor → pilih fungsi resetSheetHeaders → klik Run
+ */
+function resetSheetHeaders() {
+  const rootFolder = DriveApp.getFolderById(ROOT_FOLDER_ID)
+  const it = rootFolder.getFilesByName(MASTER_FILE_NAME)
+  if (!it.hasNext()) {
+    Logger.log('Spreadsheet tidak ditemukan, akan dibuat otomatis saat pertama kali data masuk.')
+    return
+  }
+  const ss = SpreadsheetApp.open(it.next())
+  const sh = ss.getActiveSheet()
+  const headers = getFullHeaders()
+  // Set header baris 1
+  sh.getRange(1, 1, 1, headers.length).setValues([headers])
+  sh.getRange(1, 1, 1, headers.length).setFontWeight('bold')
+  sh.setFrozenRows(1)
+  // Format kolom file (kolom 13 dst) sebagai plain text
+  for (let i = 13; i <= headers.length; i++) {
+    sh.getRange(2, i, sh.getMaxRows() - 1, 1).setNumberFormat('@STRING@')
+  }
+  Logger.log('Header berhasil direset. Total kolom: ' + headers.length)
 }
