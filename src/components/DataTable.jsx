@@ -13,11 +13,19 @@ export default function DataTable({ columns, data, onDelete, renderCell }) {
 
   const filtered = data
     .map((row, i) => ({ ...row, __origIdx: i }))
-    .filter(row =>
-      columns.some(col =>
-        String(row[col.key] ?? '').toLowerCase().includes(search.toLowerCase())
+    .filter(row => {
+      const q = search.toLowerCase()
+      if (!q) return true
+      // cek semua kolom biasa
+      const inCols = columns.some(col =>
+        String(row[col.key] ?? '').toLowerCase().includes(q)
       )
-    )
+      // cek nama dokumen (Sarana & Persuratan simpan di _searchDokumen)
+      const inDocs = row._searchDokumen
+        ? row._searchDokumen.toLowerCase().includes(q)
+        : false
+      return inCols || inDocs
+    })
 
   const filteredOrigIds = filtered.map(r => r.__origIdx)
   const totalPages      = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
