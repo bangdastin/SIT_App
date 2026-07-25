@@ -1,7 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import DataTable from './DataTable'
 import ExcelUpload from './ExcelUpload'
-import DocViewer from './DocViewer'
 import Toast, { useToast } from './Toast'
 import { saveToStorage, loadFromStorage, generateId } from '../utils/storage'
 import { saveFile, getFileURL, deleteFile } from '../utils/fileDB'
@@ -37,6 +36,19 @@ export default function Kepegawaian() {
   const [viewer, setViewer]       = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const { toast, showToast, closeToast } = useToast()
+
+  useEffect(() => {
+    if (!GAS_URL) return
+    fetch(`${GAS_URL}?action=getData`)
+      .then(r => r.json())
+      .then(res => {
+        if (res.success && res.rows.length > 0) {
+          setData(res.rows); saveToStorage(KEY, res.rows)
+        }
+      })
+      .catch(e => console.warn('GAS getData error:', e))
+  }, [])
+
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const fe = (k, v) => setEditForm(p => ({ ...p, [k]: v }))
 
@@ -85,6 +97,21 @@ export default function Kepegawaian() {
         existingDocs[d.kategori] = { namaFile: d.file.name, fileId }
       }
       updatedRow.dokumen = existingDocs
+
+      // Kirim ke GAS — hanya dokumen baru yang ada base64
+      if (GAS_URL) {
+        const gasDocsMap = {}
+        for (const d of editPendingDocs) {
+          if (!d.file) continue
+          gasDocsMap[d.kategori] = { fileName: d.file.name, base64: await fileToBase64(d.file) }
+        }
+        fetch(GAS_URL, {
+          method: 'POST', mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'updateRow', rowData: updatedRow, dokumen: gasDocsMap }),
+        }).catch(e => console.warn('GAS updateRow error:', e))
+      }
+
       const next = data.map(d => d.id === updatedRow.id ? updatedRow : d)
       setData(next); saveToStorage(KEY, next)
       setModal({ row: updatedRow }); setEditMode(false); setEditPendingDocs([])
@@ -123,7 +150,17 @@ export default function Kepegawaian() {
       kategori:     r['Kategori Dokumen'] || r['Kategori'] || r['kategori']   || KATEGORI[0],
       keterangan:   r['Keterangan']    || r['Catatan']     || r['keterangan'] || '',
       dokumen: {},
+      tanggalInput: new Date().toLocaleDateString('id-ID'),
     }))
+    if (GAS_URL) {
+      mapped.forEach(row => {
+        fetch(GAS_URL, {
+          method: 'POST', mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'uploadRow', rowData: row, dokumen: {} }),
+        }).catch(() => {})
+      })
+    }
     const next = [...data, ...mapped]; setData(next); saveToStorage(KEY, next)
     showToast('Data berhasil ditambahkan')
   }

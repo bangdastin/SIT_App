@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import DataTable from './DataTable'
 import ExcelUpload from './ExcelUpload'
 import Toast, { useToast } from './Toast'
@@ -27,10 +27,10 @@ export default function Persuratan() {
   const [data, setData]           = useState(() => {
     // Migrasi data lama (namaFile flat) → format dokumen array
     return loadFromStorage(KEY).map(d => {
-      if (!d.dokumen) {
-        return { ...d, dokumen: d.namaFile ? [{ namaFile: d.namaFile, fileId: d.id }] : [] }
-      }
-      return d
+      const base = !d.dokumen
+        ? { ...d, dokumen: d.namaFile ? [{ namaFile: d.namaFile, fileId: d.id }] : [] }
+        : d
+      return { ...base, _searchDokumen: (base.dokumen || []).map(x => x.namaFile).join(' ') }
     })
   })
   const [form, setForm]           = useState(EMPTY)
@@ -42,6 +42,26 @@ export default function Persuratan() {
   const [viewer, setViewer]       = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const { toast, showToast, closeToast } = useToast()
+
+  useEffect(() => {
+    if (!GAS_URL) return
+    fetch(`${GAS_URL}?action=getData`)
+      .then(r => r.json())
+      .then(res => {
+        if (res.success && res.rows.length > 0) {
+          const rows = withSearch(res.rows)
+          setData(rows); saveToStorage(KEY, rows)
+        }
+      })
+      .catch(e => console.warn('GAS getData error:', e))
+  }, [])
+
+  // Helper: sertakan _searchDokumen agar tabel bisa search per nama dokumen
+  const withSearch = (rows) => rows.map(r => ({
+    ...r,
+    _searchDokumen: (r.dokumen || []).map(x => x.namaFile).join(' ')
+  }))
+
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const fe = (k, v) => setEditForm(p => ({ ...p, [k]: v }))
 
@@ -72,10 +92,10 @@ export default function Persuratan() {
           body: JSON.stringify({ action: 'uploadRow', rowData: row, files: docsBase64 }),
         })
       }
-      const next = [...data, row]; setData(next); saveToStorage(KEY, next)
+      const next = withSearch([...data, row]); setData(next); saveToStorage(KEY, next)
       setForm(EMPTY); setPendingDocs([]); showToast('Data berhasil ditambahkan')
     } catch {
-      const next = [...data, row]; setData(next); saveToStorage(KEY, next)
+      const next = withSearch([...data, row]); setData(next); saveToStorage(KEY, next)
       setForm(EMPTY); setPendingDocs([]); showToast('Data berhasil ditambahkan')
     } finally { setIsLoading(false) }
   }
@@ -85,14 +105,23 @@ export default function Persuratan() {
     setIsLoading(true)
     try {
       const existing = [...(editForm.dokumen || [])]
+      const filesBase64 = []
       for (const d of editPendingDocs) {
         if (!d.file) continue
         const fileId = `${editForm.id}_${existing.length}`
         await saveFile(fileId, d.file)
         existing.push({ namaFile: d.file.name, fileId })
+        if (GAS_URL) filesBase64.push({ fileName: d.file.name, base64: await fileToBase64(d.file) })
       }
       const updatedRow = { ...editForm, dokumen: existing }
-      const next = data.map(d => d.id === updatedRow.id ? updatedRow : d)
+      if (GAS_URL) {
+        fetch(GAS_URL, {
+          method: 'POST', mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'updateRow', rowData: updatedRow, files: filesBase64 }),
+        }).catch(e => console.warn('GAS updateRow error:', e))
+      }
+      const next = withSearch(data.map(d => d.id === updatedRow.id ? updatedRow : d))
       setData(next); saveToStorage(KEY, next)
       setModal({ row: updatedRow }); setEditMode(false); setEditPendingDocs([])
       showToast('Data berhasil diperbarui')
@@ -116,7 +145,7 @@ export default function Persuratan() {
       }
     }
     const idxSet = new Set(indices)
-    const next = data.filter((_, x) => !idxSet.has(x))
+    const next = withSearch(data.filter((_, x) => !idxSet.has(x)))
     setData(next); saveToStorage(KEY, next)
   }
 
@@ -128,7 +157,16 @@ export default function Persuratan() {
       dokumen:      r['Nama Dokumen'] || r['namaFile'] ? [{ namaFile: r['Nama Dokumen'] || r['namaFile'] || '', fileId: null }] : [],
       tanggalInput: r['Tanggal Input'] || new Date().toLocaleDateString('id-ID'),
     }))
-    const next = [...data, ...mapped]; setData(next); saveToStorage(KEY, next)
+    if (GAS_URL) {
+      mapped.forEach(row => {
+        fetch(GAS_URL, {
+          method: 'POST', mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'uploadRow', rowData: row, files: [] }),
+        }).catch(() => {})
+      })
+    }
+    const next = withSearch([...data, ...mapped]); setData(next); saveToStorage(KEY, next)
     showToast('Data berhasil ditambahkan')
   }
 
@@ -303,10 +341,10 @@ export default function Persuratan() {
 
 function SuratDocItem({ doc, onView }) {
   const [url, setUrl] = useState(null)
-  useState(() => {
+  useEffect(() => {
     if (doc.fileId) getFileURL(doc.fileId).then(setUrl).catch(() => {})
     else if (doc.urlDrive) setUrl(doc.urlDrive)
-  }, [])
+  }, [doc])
   return (
     <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
       <span className="text-slate-600 flex-1 truncate">{doc.namaFile || '-'}</span>
