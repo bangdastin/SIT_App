@@ -55,11 +55,14 @@ export default function Sarana() {
       .catch(e => console.warn('GAS getData error:', e))
   }, [])
 
-  // Helper: selalu sertakan _searchDokumen agar tabel bisa search per nama dokumen
+  // Helper: sertakan _searchDokumen agar tabel bisa search per nama dokumen
   const withSearch = (rows) => rows.map(r => ({
     ...r,
     _searchDokumen: (r.dokumen || []).map(x => x.namaFile).join(' ')
   }))
+
+  const f  = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const fe = (k, v) => setEditForm(p => ({ ...p, [k]: v }))
 
   const handleSubmit = async (e) => {
     e.preventDefault()

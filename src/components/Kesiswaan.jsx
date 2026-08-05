@@ -61,7 +61,7 @@ function migrateRow(d) {
 }
 
 function mapRow(r) {
-  const nama = pick(r,'Nama','Nama Murid','nama')
+  const nama = pick(r,'Nama','Nama Murid','NAMA MURID','nama')
   if (!nama || !isNaN(Number(nama))) return null
   const jkRaw = pick(r,'JK','Jenis Kelamin','jk')
   const jk = jkRaw==='L'?'Laki-laki':jkRaw==='P'?'Perempuan':jkRaw
@@ -75,10 +75,10 @@ function mapRow(r) {
   return {
     id:generateId(), nama,
     nis:pick(r,'NIS','nis'), nisn:pick(r,'NISN','nisn'), jk,
-    tempatLahir:pick(r,'Tempat Lahir','Tempat_Lahir','tempatLahir'),
-    tanggalLahir:fmtDisplay(pick(r,'Tanggal Lahir','Tanggal_Lahir','tanggalLahir')),
-    agama:pick(r,'Agama','agama'), alamat,
-    sekolahAsal:pick(r,'Sekolah Asal','Sekolah_Asal','sekolahAsal'),
+    tempatLahir:pick(r,'Tempat Lahir','TEMPAT LAHIR','Tempat_Lahir','tempatLahir'),
+    tanggalLahir:fmtDisplay(pick(r,'Tanggal Lahir','TGL LAHIR','TANGGAL LAHIR','Tanggal_Lahir','tanggalLahir')),
+    agama:pick(r,'Agama','AGAMA','agama'), alamat,
+    sekolahAsal:pick(r,'Sekolah Asal','SEKOLAH ASAL','Sekolah_Asal','sekolahAsal'),
     keterangan:pick(r,'Keterangan','Catatan','keterangan'),
     dokumen,
     tanggalInput:pick(r,'Tanggal Input','tanggalInput')||new Date().toLocaleDateString('id-ID'),
